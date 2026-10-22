@@ -6,7 +6,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="MyMusic">
-    <title>MyMusic Cloud</title>
+    <title>MyMusic Cloud v3</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { -webkit-tap-highlight-color: transparent; user-select: none; }
@@ -33,24 +33,41 @@
     <div id="libraryHeader" class="pt-12 pb-3 px-4 bg-zinc-900 border-b border-zinc-800 hidden flex justify-between items-center">
         <h1 id="libraryTitle" class="text-lg font-bold">❤️ Любимые треки</h1>
         <div id="playlistActions" class="hidden flex gap-2">
-            <button onclick="createNewPlaylist()" class="bg-zinc-800 text-xs px-3 py-1.5 rounded-lg border border-zinc-700">+ Создать</button>
-            <button onclick="importPlaylistPrompt()" class="bg-green-500 text-black font-semibold text-xs px-3 py-1.5 rounded-lg">📥 Импорт Spotify</button>
+            <button onclick="createNewPlaylist()" class="bg-zinc-800 text-xs px-3 py-1.5 rounded-lg border border-zinc-700 active:scale-95">+ Создать</button>
+            <button onclick="openImportModal()" class="bg-green-500 text-black font-semibold text-xs px-3 py-1.5 rounded-lg active:scale-95">📥 Импорт Spotify</button>
         </div>
     </div>
 
     <!-- ОСНОВНОЙ ЭКРАН КОНТЕНТА -->
     <div id="mainContent" class="flex-1 overflow-y-auto p-4 space-y-2.5 pb-48">
         <div class="text-zinc-500 text-center mt-20 text-sm">
-            Автономная облачная версия (GitHub Pages)<br>Введи название песни сверху!
+            Автономная облачная версия v3.0<br>Введи название песни сверху!
         </div>
     </div>
 
-    <!-- МОДАЛЬНОЕ ОКНО: Выбор плейлиста -->
+    <!-- МОДАЛЬНОЕ ОКНО: Добавление трека в плейлист -->
     <div id="playlistModal" class="fixed inset-0 bg-black/80 z-50 hidden flex items-center justify-center p-4">
         <div class="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-sm p-4 space-y-3">
             <div class="text-sm font-bold text-center">Добавить трек в плейлист</div>
             <div id="modalPlaylistList" class="space-y-2 max-h-60 overflow-y-auto"></div>
             <button onclick="closeModal()" class="w-full py-2 bg-zinc-800 rounded-xl text-xs text-zinc-400">Отмена</button>
+        </div>
+    </div>
+
+    <!-- МОДАЛЬНОЕ ОКНО: Умный импорт плейлиста -->
+    <div id="importModal" class="fixed inset-0 bg-black/80 z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-sm p-4 space-y-3">
+            <div class="text-sm font-bold text-center text-green-400">📥 Импорт плейлиста</div>
+            <div class="text-xs text-zinc-400 leading-relaxed">
+                Вставь ссылку на открытый плейлист <b>Spotify</b> ИЛИ список песен (каждая с новой строки или через запятую):
+            </div>
+            <textarea id="importInput" rows="4" placeholder="https://open.spotify.com/playlist/...&#10;или&#10;2hug - 22&#10;Скриптонит - Привычка" 
+                class="w-full bg-zinc-800 text-white p-3 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-green-500"></textarea>
+            <div id="importStatus" class="text-xs text-center text-zinc-400 hidden"></div>
+            <div class="flex gap-2">
+                <button onclick="closeImportModal()" class="flex-1 py-2.5 bg-zinc-800 rounded-xl text-xs text-zinc-400">Отмена</button>
+                <button id="importSubmitBtn" onclick="runSmartImport()" class="flex-1 py-2.5 bg-green-500 text-black font-bold rounded-xl text-xs active:scale-95 transition">Импортировать</button>
+            </div>
         </div>
     </div>
 
@@ -95,13 +112,8 @@
     </div>
 
     <audio id="audioPlayer" playsinline></audio>
-    <div id="ytHiddenPlayer" class="hidden"></div>
-
-    <!-- YouTube IFrame API (для безотказного воспроизведения без своего сервера) -->
-    <script src="https://www.youtube.com/iframe_api"></script>
 
     <script>
-        // Список публичных облачных API для поиска и получения аудиопотоков
         const PIPED_APIS = [
             "https://pipedapi.kavin.rocks",
             "https://pipedapi.tokhmi.xyz",
@@ -139,7 +151,21 @@
             }
         };
 
-        // 1. ПОИСК МУЗЫКИ НАПРЯМУЮ ИЗ БРАУЗЕРА (Без своего сервера!)
+        // Вспомогательная функция запроса с таймаутом, чтобы прокси не зависали
+        async function fetchWithTimeout(url, timeout = 8000) {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), timeout);
+            try {
+                const res = await fetch(url, { signal: controller.signal });
+                clearTimeout(timer);
+                return res;
+            } catch (e) {
+                clearTimeout(timer);
+                throw e;
+            }
+        }
+
+        // 1. ПОИСК МУЗЫКИ НАПРЯМУЮ ИЗ БРАУЗЕРА
         async function searchMusic() {
             const query = document.getElementById('searchInput').value.trim();
             if (!query) return;
@@ -149,47 +175,50 @@
 
             try {
                 if (currentSource === 'spotify') {
-                    // Используем открытый музыкальный каталог iTunes/Spotify Metadata + Saavn CDN для полных студийных аудиодорожек
-                    const res = await fetch(`https://saavn.dev/api/search/songs?query=${encodeURIComponent(query)}&limit=15`);
-                    const json = await res.json();
-                    if (json.data && json.data.results && json.data.results.length > 0) {
-                        lastSearchResults = json.data.results.map(item => ({
-                            id: item.id,
-                            title: item.name.replace(/&quot;/g, '"').replace(/&amp;/g, '&'),
-                            artist: item.artists?.primary?.map(a => a.name).join(', ') || 'Artist',
-                            thumbnail: item.image?.[item.image.length - 1]?.url || 'https://via.placeholder.com/150',
-                            streamDirect: item.downloadUrl?.[item.downloadUrl.length - 1]?.url || null,
-                            source: 'spotify'
-                        }));
-                        renderTrackList(lastSearchResults);
-                        return;
-                    }
+                    try {
+                        const res = await fetchWithTimeout(`https://saavn.dev/api/search/songs?query=${encodeURIComponent(query)}&limit=15`, 6000);
+                        const json = await res.json();
+                        if (json.data && json.data.results && json.data.results.length > 0) {
+                            lastSearchResults = json.data.results.map(item => ({
+                                id: item.id,
+                                title: item.name.replace(/&quot;/g, '"').replace(/&amp;/g, '&'),
+                                artist: item.artists?.primary?.map(a => a.name).join(', ') || 'Artist',
+                                thumbnail: item.image?.[item.image.length - 1]?.url || 'https://via.placeholder.com/150',
+                                streamDirect: item.downloadUrl?.[item.downloadUrl.length - 1]?.url || null,
+                                source: 'spotify'
+                            }));
+                            renderTrackList(lastSearchResults);
+                            return;
+                        }
+                    } catch (e) {}
                 }
 
                 // Поиск через облачные YouTube-зеркала (Piped API)
                 for (const api of PIPED_APIS) {
                     try {
                         const filter = currentSource === 'spotify' ? 'music_songs' : 'videos';
-                        const res = await fetch(`${api}/search?q=${encodeURIComponent(query)}&filter=${filter}`);
+                        const res = await fetchWithTimeout(`${api}/search?q=${encodeURIComponent(query)}&filter=${filter}`, 5000);
                         if (!res.ok) continue;
                         const data = await res.json();
-                        lastSearchResults = (data.items || []).slice(0, 15).map(item => {
-                            const vidId = item.url ? item.url.split('v=')[1] : item.id;
-                            return {
-                                id: vidId,
-                                title: item.title,
-                                artist: item.uploaderName || 'YouTube',
-                                thumbnail: item.thumbnail,
-                                videoId: vidId,
-                                source: currentSource
-                            };
-                        });
-                        renderTrackList(lastSearchResults);
-                        return;
+                        if (data.items && data.items.length > 0) {
+                            lastSearchResults = data.items.slice(0, 15).map(item => {
+                                const vidId = item.url ? item.url.split('v=')[1] : item.id;
+                                return {
+                                    id: vidId,
+                                    title: item.title,
+                                    artist: item.uploaderName || 'YouTube',
+                                    thumbnail: item.thumbnail,
+                                    videoId: vidId,
+                                    source: currentSource
+                                };
+                            });
+                            renderTrackList(lastSearchResults);
+                            return;
+                        }
                     } catch (e) {}
                 }
 
-                // Резервный поиск по каталогу iTunes (работает 100% везде без VPN)
+                // Резервный поиск по каталогу iTunes
                 const itunesRes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=15`);
                 const itunesData = await itunesRes.json();
                 lastSearchResults = itunesData.results.map(item => ({
@@ -208,14 +237,19 @@
             }
         }
 
-        // 2. ЗАПУСК ТРЕКА (Прямой поток M4A из облака)
+        // 2. ЗАПУСК ТРЕКА
         async function playTrack(track) {
             currentTrack = track;
             showPlayerUI(track);
             document.getElementById('playPauseBtn').innerText = '⏳';
 
+            if (currentTab === 'favorites') {
+                renderTrackList(favorites, { isFavorites: true });
+            } else if ((currentTab === 'spotify' || currentTab === 'youtube') && lastSearchResults.length > 0) {
+                renderTrackList(lastSearchResults);
+            }
+
             try {
-                // А. Если у трека уже есть прямая ссылка на полный M4A-файл
                 if (track.streamDirect && !track.searchQuery) {
                     audio.src = track.streamDirect;
                     audio.play();
@@ -223,23 +257,23 @@
                     return;
                 }
 
-                // Б. Если трек импортирован из Spotify или найден по названию — ищем его полный аудиопоток
                 const q = track.searchQuery || `${track.artist} - ${track.title}`;
-                const sRes = await fetch(`https://saavn.dev/api/search/songs?query=${encodeURIComponent(q)}&limit=1`);
-                const sData = await sRes.json();
-                if (sData.data?.results?.[0]?.downloadUrl) {
-                    const urls = sData.data.results[0].downloadUrl;
-                    audio.src = urls[urls.length - 1].url;
-                    audio.play();
-                    setupLockScreen(track);
-                    return;
-                }
+                try {
+                    const sRes = await fetchWithTimeout(`https://saavn.dev/api/search/songs?query=${encodeURIComponent(q)}&limit=1`, 5000);
+                    const sData = await sRes.json();
+                    if (sData.data?.results?.[0]?.downloadUrl) {
+                        const urls = sData.data.results[0].downloadUrl;
+                        audio.src = urls[urls.length - 1].url;
+                        audio.play();
+                        setupLockScreen(track);
+                        return;
+                    }
+                } catch (e) {}
 
-                // В. Если это видео из YouTube — забираем аудиодорожку через облачный шлюз Piped
                 if (track.videoId) {
                     for (const api of PIPED_APIS) {
                         try {
-                            const r = await fetch(`${api}/streams/${track.videoId}`);
+                            const r = await fetchWithTimeout(`${api}/streams/${track.videoId}`, 5000);
                             if (!r.ok) continue;
                             const streamData = await r.json();
                             const m4a = (streamData.audioStreams || []).find(s => s.mimeType?.includes('mp4')) || streamData.audioStreams?.[0];
@@ -253,7 +287,16 @@
                     }
                 }
 
-                // Г. Запасной вариант (аудио из iTunes)
+                // Запасной поиск аудио в iTunes, если трек был импортирован по названию
+                const itunesRes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(q)}&entity=song&limit=1`);
+                const itunesData = await itunesRes.json();
+                if (itunesData.results?.[0]?.previewUrl) {
+                    audio.src = itunesData.results[0].previewUrl;
+                    audio.play();
+                    setupLockScreen(track);
+                    return;
+                }
+
                 if (track.streamDirect) {
                     audio.src = track.streamDirect;
                     audio.play();
@@ -267,8 +310,7 @@
             }
         }
 
-        // 3. ИМПОРТ ПЛЕЙЛИСТОВ SPOTIFY ПРЯМО В БРАУЗЕРЕ
-// Универсальный поиск ключа внутри JSON Spotify (на любой глубине)
+        // 3. УМНЫЙ ИМПОРТ ПЛЕЙЛИСТОВ (Ссылки Spotify + Списки треков)
         function findKeyDeep(obj, key) {
             if (!obj || typeof obj !== 'object') return null;
             if (key in obj && obj[key]) return obj[key];
@@ -279,12 +321,32 @@
             return null;
         }
 
-        // 3. ИМПОРТ ПЛЕЙЛИСТОВ SPOTIFY ПРЯМО В БРАУЗЕРЕ (Через каскад из 4 прокси)
-        async function importPlaylistPrompt() {
-            const url = prompt("Вставь ссылку на открытый плейлист из Spotify:");
-            if (!url) return;
+        function openImportModal() {
+            document.getElementById('importInput').value = '';
+            document.getElementById('importStatus').classList.add('hidden');
+            document.getElementById('importModal').classList.remove('hidden');
+        }
 
-            const match = url.match(/playlist\/([a-zA-Z0-9]+)/);
+        function closeImportModal() {
+            document.getElementById('importModal').classList.add('hidden');
+        }
+
+        async function runSmartImport() {
+            const rawInput = document.getElementById('importInput').value.trim();
+            if (!rawInput) return;
+
+            const statusEl = document.getElementById('importStatus');
+            const submitBtn = document.getElementById('importSubmitBtn');
+
+            // Вариант А: Если вставлен список треков текстом (не ссылка на плейлист)
+            if (!rawInput.includes("spotify.com/playlist/")) {
+                closeImportModal();
+                importFromTextList(rawInput);
+                return;
+            }
+
+            // Вариант Б: Это ссылка на плейлист Spotify
+            const match = rawInput.match(/playlist\/([a-zA-Z0-9]+)/);
             if (!match) {
                 alert("Неверная ссылка! Нужна ссылка вида open.spotify.com/playlist/...");
                 return;
@@ -292,82 +354,122 @@
 
             const playlistId = match[1];
             const embedUrl = `https://open.spotify.com/embed/playlist/${playlistId}`;
-            const container = document.getElementById('mainContent');
-            container.innerHTML = `<div class="text-center text-green-400 mt-16 animate-pulse">Скачиваем плейлист из Spotify...<br><span class="text-xs text-zinc-500">Пробуем облачные шлюзы (5-10 сек)</span></div>`;
+            const cleanUrl = `https://open.spotify.com/playlist/${playlistId}`;
 
-            // Список облачных шлюзов (если один не сработает, берется следующий)
-            const proxyUrls = [
+            statusEl.classList.remove('hidden');
+            statusEl.innerText = "⏳ Получаем данные плейлиста через облачные шлюзы...";
+            submitBtn.disabled = true;
+
+            let plName = "Spotify Плейлист";
+            let cover = "https://via.placeholder.com/150";
+
+            // Шаг 1: Узнаем точное имя плейлиста и обложку через открытый официальный oEmbed API Spotify
+            try {
+                const oembedRes = await fetchWithTimeout(`https://open.spotify.com/oembed?url=${encodeURIComponent(cleanUrl)}`, 5000);
+                if (oembedRes.ok) {
+                    const oembedData = await oembedRes.json();
+                    plName = oembedData.title || plName;
+                    cover = oembedData.thumbnail_url || cover;
+                }
+            } catch (e) {}
+
+            // Шаг 2: Пробуем вытащить список треков через 4 разных CORS-прокси
+            const proxies = [
+                `https://api.allorigins.win/get?url=${encodeURIComponent(embedUrl)}`,
                 `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(embedUrl)}`,
-                `https://corsproxy.io/?${encodeURIComponent(embedUrl)}`,
-                `https://api.allorigins.win/raw?url=${encodeURIComponent(embedUrl)}`,
-                `https://thingproxy.freeboard.io/fetch/${embedUrl}`
+                `https://corsproxy.io/?url=${encodeURIComponent(embedUrl)}`,
+                `https://api.allorigins.win/raw?url=${encodeURIComponent(embedUrl)}`
             ];
 
             let html = "";
-            for (const proxy of proxyUrls) {
+            for (const proxyUrl of proxies) {
                 try {
-                    const res = await fetch(proxy);
+                    const res = await fetchWithTimeout(proxyUrl, 7000);
                     if (!res.ok) continue;
                     const text = await res.text();
-                    // Проверяем, что вернулась именно страница плеера с треками, а не заглушка
-                    if (text && (text.includes("trackList") || text.includes("__NEXT_DATA__"))) {
-                        html = text;
+                    let content = text;
+                    if (text.trim().startsWith('{"contents":')) {
+                        const parsed = JSON.parse(text);
+                        content = parsed.contents || "";
+                    }
+                    if (content && (content.includes("trackList") || content.includes("__NEXT_DATA__"))) {
+                        html = content;
                         break;
                     }
-                } catch (e) {
-                    console.log("Прокси не ответил, пробуем следующий...", proxy);
-                }
+                } catch (e) {}
             }
 
-            if (!html) {
-                alert("Ни один облачный шлюз не смог достучаться до Spotify. Попробуй еще раз через минуту или включи VPN.");
-                renderPlaylistsView();
-                return;
-            }
+            submitBtn.disabled = false;
 
-            try {
-                // Ищем JSON с данными внутри страницы
-                const nextMatch = html.match(/<script[^>]*id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/) || 
-                                  html.match(/<script[^>]*type="application\/json"[^>]*>([\s\S]*?trackList[\s\S]*?)<\/script>/);
+            if (html) {
+                try {
+                    const nextMatch = html.match(/<script[^>]*id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/) ||
+                                      html.match(/<script[^>]*type="application\/json"[^>]*>([\s\S]*?trackList[\s\S]*?)<\/script>/);
+                    if (nextMatch) {
+                        const json = JSON.parse(nextMatch[1]);
+                        const trackList = findKeyDeep(json, 'trackList');
+                        if (Array.isArray(trackList) && trackList.length > 0) {
+                            const importedTracks = trackList.map((t, idx) => {
+                                const artist = (t.subtitle || "Spotify").replace(/\u00a0/g, " ");
+                                const title = t.title || "Трек";
+                                return {
+                                    id: t.uri || `sp-${idx}-${Date.now()}`,
+                                    title: title,
+                                    artist: artist,
+                                    thumbnail: cover,
+                                    searchQuery: `${artist} - ${title}`,
+                                    source: 'spotify'
+                                };
+                            });
 
-                if (nextMatch) {
-                    const json = JSON.parse(nextMatch[1]);
-                    const trackList = findKeyDeep(json, 'trackList');
-                    const entity = findKeyDeep(json, 'entity') || json;
-                    
-                    const plName = entity?.name || entity?.title || "Spotify Плейлист";
-                    const coverObj = findKeyDeep(json, 'coverArt') || findKeyDeep(json, 'visualIdentity');
-                    const sources = findKeyDeep(coverObj, 'sources') || findKeyDeep(coverObj, 'image');
-                    const cover = (Array.isArray(sources) && sources[0]?.url) ? sources[0].url : "https://via.placeholder.com/150";
-
-                    if (Array.isArray(trackList) && trackList.length > 0) {
-                        const importedTracks = trackList.map((t, idx) => {
-                            const artist = (t.subtitle || "Исполнитель").replace(/\u00a0/g, " ");
-                            const title = t.title || "Трек";
-                            return {
-                                id: t.uri || `sp-${idx}-${Date.now()}`,
-                                title: title,
-                                artist: artist,
-                                thumbnail: cover,
-                                searchQuery: `${artist} - ${title}`,
-                                source: 'spotify'
-                            };
-                        });
-
-                        playlists.unshift({ name: plName, tracks: importedTracks });
-                        localStorage.setItem('my_playlists', JSON.stringify(playlists));
-                        renderPlaylistsView();
-                        return;
+                            playlists.unshift({ name: plName, tracks: importedTracks });
+                            localStorage.setItem('my_playlists', JSON.stringify(playlists));
+                            closeImportModal();
+                            renderPlaylistsView();
+                            return;
+                        }
                     }
-                }
-                alert("Страница загружена, но список треков внутри не найден. Убедись, что плейлист открытый (Public).");
-                renderPlaylistsView();
-            } catch (e) {
-                alert("Ошибка разбора данных плейлиста: " + e.message);
-                renderPlaylistsView();
+                } catch (e) {}
             }
+
+            // Если Spotify заблокировал все бесплатные прокси по региону — переключаем поле в режим быстрой вставки списка
+            statusEl.innerHTML = `<span class="text-amber-400">Spotify заблокировал авто-шлюз для «${plName}». Просто вставь сюда названия треков (каждый с новой строки или через запятую) и нажми «Импортировать»!</span>`;
+            document.getElementById('importInput').value = "";
+            document.getElementById('importInput').placeholder = "Например:\n2hug - 22\nPlayboi Carti - Sky\nTravis Scott - FE!N";
+            window.pendingPlaylistMeta = { name: plName, cover: cover };
         }
-        // Остальная логика приложения (Очередь, Shuffle, Лайки, Плейлисты)
+
+        function importFromTextList(text) {
+            const meta = window.pendingPlaylistMeta || {};
+            const name = meta.name || prompt("Название для нового плейлиста:", "Мой плейлист");
+            const cover = meta.cover || "https://via.placeholder.com/150";
+            window.pendingPlaylistMeta = null;
+
+            if (!name) { renderPlaylistsView(); return; }
+
+            const lines = text.split(/[\n,]+/).map(s => s.trim()).filter(s => s.length > 1);
+            const tracks = lines.map((line, idx) => {
+                const parts = line.split(/\s*[-–—]\s*/);
+                const artist = parts.length > 1 ? parts[0] : "Трек";
+                const title = parts.length > 1 ? parts.slice(1).join(" - ") : line;
+                return {
+                    id: `custom-${idx}-${Date.now()}`,
+                    title: title,
+                    artist: artist,
+                    thumbnail: cover,
+                    searchQuery: line,
+                    source: 'spotify'
+                };
+            });
+
+            if (tracks.length > 0) {
+                playlists.unshift({ name: name, tracks: tracks });
+                localStorage.setItem('my_playlists', JSON.stringify(playlists));
+            }
+            renderPlaylistsView();
+        }
+
+        // 4. ОЧЕРЕДЬ, ПЕРЕМЕШИВАНИЕ (SHUFFLE), ЛАЙКИ И ПЛЕЙЛИСТЫ
         function shuffleArray(arr) {
             const copy = [...arr];
             for (let i = copy.length - 1; i > 0; i--) {
@@ -470,8 +572,8 @@
             if (tracks.length > 1 && (options.isFavorites || options.playlistIndex !== undefined)) {
                 headerHtml += `
                     <div class="flex gap-2 mb-3">
-                        <button onclick="playAllInOrder()" class="flex-1 bg-zinc-800 text-white font-semibold py-2.5 rounded-xl text-xs">▶ Слушать</button>
-                        <button onclick="shuffleAndPlayAll()" class="flex-1 bg-green-500 text-black font-semibold py-2.5 rounded-xl text-xs">🔀 Перемешать</button>
+                        <button onclick="playAllInOrder()" class="flex-1 bg-zinc-800 text-white font-semibold py-2.5 rounded-xl text-xs active:scale-95 transition">▶ Слушать</button>
+                        <button onclick="shuffleAndPlayAll()" class="flex-1 bg-green-500 text-black font-semibold py-2.5 rounded-xl text-xs active:scale-95 transition">🔀 Перемешать</button>
                     </div>`;
             }
 
@@ -479,6 +581,10 @@
             container.innerHTML = headerHtml + tracks.map((t, idx) => {
                 const isLiked = favorites.some(f => f.id === t.id);
                 const isCurrent = currentTrack && currentTrack.id === t.id;
+                const removeBtn = options.playlistIndex !== undefined 
+                    ? `<button onclick="event.stopPropagation(); removeTrackFromPlaylist(${options.playlistIndex}, ${idx})" class="text-zinc-500 px-1.5 text-xs">✖</button>`
+                    : '';
+
                 return `
                     <div onclick="playFromList(${idx})" class="flex items-center gap-3 bg-zinc-900/70 p-2.5 rounded-xl active:bg-zinc-800 transition cursor-pointer">
                         <img src="${t.thumbnail}" class="w-12 h-12 rounded-lg object-cover bg-zinc-800">
@@ -488,8 +594,15 @@
                         </div>
                         <button onclick="event.stopPropagation(); toggleLikeTrack(${idx})" class="text-lg px-1.5">${isLiked ? '❤️' : '🤍'}</button>
                         <button onclick="event.stopPropagation(); openAddToPlaylistModal(${idx})" class="text-zinc-400 text-lg px-1.5">➕</button>
+                        ${removeBtn}
                     </div>`;
             }).join('');
+        }
+
+        function removeTrackFromPlaylist(plIndex, trackIdx) {
+            playlists[plIndex].tracks.splice(trackIdx, 1);
+            localStorage.setItem('my_playlists', JSON.stringify(playlists));
+            renderTrackList(playlists[plIndex].tracks, { playlistIndex: plIndex });
         }
 
         function playFromList(index) {
@@ -574,8 +687,8 @@
                 return;
             }
             container.innerHTML = playlists.map((pl, i) => `
-                <div onclick="renderTrackList(playlists[${i}].tracks, { playlistIndex: ${i} })" class="flex items-center gap-3 bg-zinc-900 p-3 rounded-xl cursor-pointer">
-                    <img src="${pl.tracks[0]?.thumbnail || 'https://via.placeholder.com/150'}" class="w-14 h-14 rounded-lg object-cover">
+                <div onclick="renderTrackList(playlists[${i}].tracks, { playlistIndex: ${i} })" class="flex items-center gap-3 bg-zinc-900 p-3 rounded-xl cursor-pointer active:bg-zinc-800">
+                    <img src="${pl.tracks[0]?.thumbnail || 'https://via.placeholder.com/150'}" class="w-14 h-14 rounded-lg object-cover bg-zinc-800">
                     <div class="flex-1">
                         <div class="text-sm font-bold">${pl.name}</div>
                         <div class="text-xs text-zinc-400">${pl.tracks.length} треков</div>
@@ -593,6 +706,7 @@
         }
 
         function deletePlaylist(index) {
+            if (!confirm(`Удалить плейлист «${playlists[index].name}»?`)) return;
             playlists.splice(index, 1);
             localStorage.setItem('my_playlists', JSON.stringify(playlists));
             renderPlaylistsView();
