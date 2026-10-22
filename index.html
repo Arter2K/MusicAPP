@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="MyMusic">
+    <title>MyMusic Cloud</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { -webkit-tap-highlight-color: transparent; user-select: none; }
+    </style>
+</head>
+<body class="bg-zinc-950 text-white h-screen flex flex-col overflow-hidden font-sans">
+
+    <!-- ШАПКА: Поиск -->
+    <div id="searchHeader" class="pt-12 pb-3 px-4 bg-zinc-900 border-b border-zinc-800">
+        <div class="flex gap-2">
+            <input id="searchInput" type="text" placeholder="Трек, артист или ремикс..." 
+                class="w-full bg-zinc-800 text-white px-4 py-2.5 rounded-xl focus:outline-none focus:ring-2 focus:ring-green-500 text-sm"
+                onkeydown="if(event.key === 'Enter') searchMusic()">
+            <button onclick="searchMusic()" class="bg-green-500 text-black font-semibold px-4 py-2.5 rounded-xl text-sm active:scale-95 transition">
+                Найти
+            </button>
+        </div>
+        <div id="sourceLabel" class="text-xs text-zinc-400 mt-2">
+            Ищем в: <span class="text-green-400 font-semibold">Spotify (Официальный каталог)</span>
+        </div>
+    </div>
+
+    <!-- ШАПКА: Заголовок для Любимых и Плейлистов -->
+    <div id="libraryHeader" class="pt-12 pb-3 px-4 bg-zinc-900 border-b border-zinc-800 hidden flex justify-between items-center">
+        <h1 id="libraryTitle" class="text-lg font-bold">❤️ Любимые треки</h1>
+        <div id="playlistActions" class="hidden flex gap-2">
+            <button onclick="createNewPlaylist()" class="bg-zinc-800 text-xs px-3 py-1.5 rounded-lg border border-zinc-700">+ Создать</button>
+            <button onclick="importPlaylistPrompt()" class="bg-green-500 text-black font-semibold text-xs px-3 py-1.5 rounded-lg">📥 Импорт Spotify</button>
+        </div>
+    </div>
+
+    <!-- ОСНОВНОЙ ЭКРАН КОНТЕНТА -->
+    <div id="mainContent" class="flex-1 overflow-y-auto p-4 space-y-2.5 pb-48">
+        <div class="text-zinc-500 text-center mt-20 text-sm">
+            Автономная облачная версия (GitHub Pages)<br>Введи название песни сверху!
+        </div>
+    </div>
+
+    <!-- МОДАЛЬНОЕ ОКНО: Выбор плейлиста -->
+    <div id="playlistModal" class="fixed inset-0 bg-black/80 z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-sm p-4 space-y-3">
+            <div class="text-sm font-bold text-center">Добавить трек в плейлист</div>
+            <div id="modalPlaylistList" class="space-y-2 max-h-60 overflow-y-auto"></div>
+            <button onclick="closeModal()" class="w-full py-2 bg-zinc-800 rounded-xl text-xs text-zinc-400">Отмена</button>
+        </div>
+    </div>
+
+    <!-- МИНИ-ПЛЕЕР -->
+    <div id="playerBar" class="fixed bottom-16 left-2 right-2 bg-zinc-900/95 backdrop-blur-md border border-zinc-800 p-3 rounded-2xl shadow-2xl hidden z-40">
+        <div class="flex items-center gap-2.5">
+            <img id="playerThumb" src="" class="w-11 h-11 rounded-xl object-cover bg-zinc-800">
+            <div class="flex-1 min-w-0">
+                <div id="playerTitle" class="text-sm font-semibold truncate">Не выбрано</div>
+                <div id="playerArtist" class="text-xs text-zinc-400 truncate">---</div>
+            </div>
+            <button id="playerLikeBtn" onclick="toggleLikeCurrent()" class="text-lg px-0.5 active:scale-90 transition">🤍</button>
+            <button id="shuffleBtn" onclick="toggleShuffle()" class="text-sm px-1.5 py-1 rounded-lg text-zinc-500 active:scale-90 transition">🔀</button>
+            <button onclick="playPrev()" class="text-zinc-300 text-lg px-0.5 active:scale-90">⏮</button>
+            <button id="playPauseBtn" onclick="togglePlay()" class="w-9 h-9 bg-white text-black rounded-full flex items-center justify-center font-bold text-base active:scale-90 transition shrink-0">
+                ▶
+            </button>
+            <button onclick="playNext()" class="text-zinc-300 text-lg px-0.5 active:scale-90">⏭</button>
+            <button id="repeatBtn" onclick="toggleRepeat()" class="text-sm px-1.5 py-1 rounded-lg text-zinc-500 active:scale-90 transition">🔁</button>
+        </div>
+        <div class="mt-2 flex items-center gap-2 text-[10px] text-zinc-400">
+            <span id="currentTime">0:00</span>
+            <input id="progressBar" type="range" value="0" min="0" max="100" class="w-full accent-green-500 h-1 bg-zinc-700 rounded-lg" oninput="seekAudio(this.value)">
+            <span id="durationTime">0:00</span>
+        </div>
+    </div>
+
+    <!-- НИЖНЕЕ МЕНЮ -->
+    <div class="fixed bottom-0 left-0 right-0 h-16 bg-zinc-900 border-t border-zinc-800 flex justify-around items-center px-1 z-50">
+        <button onclick="switchTab('spotify')" id="tab-spotify" class="flex flex-col items-center text-green-400 font-bold text-xs py-1 px-3">
+            <span>🟢 Spotify</span>
+        </button>
+        <button onclick="switchTab('youtube')" id="tab-youtube" class="flex flex-col items-center text-zinc-500 text-xs py-1 px-3">
+            <span>🔴 YouTube</span>
+        </button>
+        <button onclick="switchTab('favorites')" id="tab-favorites" class="flex flex-col items-center text-zinc-500 text-xs py-1 px-3">
+            <span>❤️ Любимые</span>
+        </button>
+        <button onclick="switchTab('playlists')" id="tab-playlists" class="flex flex-col items-center text-zinc-500 text-xs py-1 px-3">
+            <span>📁 Плейлисты</span>
+        </button>
+    </div>
+
+    <audio id="audioPlayer" playsinline></audio>
+    <div id="ytHiddenPlayer" class="hidden"></div>
+
+    <!-- YouTube IFrame API (для безотказного воспроизведения без своего сервера) -->
+    <script src="https://www.youtube.com/iframe_api"></script>
+
+    <script>
+        // Список публичных облачных API для поиска и получения аудиопотоков
+        const PIPED_APIS = [
+            "https://pipedapi.kavin.rocks",
+            "https://pipedapi.tokhmi.xyz",
+            "https://pipedapi.syncpundit.io",
+            "https://api.piped.projectsegfault.nl"
+        ];
+
+        let currentTab = 'spotify';
+        let currentSource = 'spotify';
+        let currentTrack = null;
+        let originalQueue = [];
+        let currentQueue = [];
+        let currentIndex = -1;
+        let isShuffle = JSON.parse(localStorage.getItem('my_shuffle') || 'false');
+        let repeatMode = localStorage.getItem('my_repeat') || 'none';
+        let trackToAdd = null;
+
+        let favorites = JSON.parse(localStorage.getItem('my_favorites') || '[]');
+        let playlists = JSON.parse(localStorage.getItem('my_playlists') || '[]');
+        let lastSearchResults = [];
+
+        const audio = document.getElementById('audioPlayer');
+
+        window.onload = () => {
+            updateShuffleUI();
+            updateRepeatUI();
+            const saved = localStorage.getItem('lastTrackState');
+            if (saved) {
+                const state = JSON.parse(saved);
+                currentTrack = state.track;
+                originalQueue = [currentTrack];
+                currentQueue = [currentTrack];
+                currentIndex = 0;
+                showPlayerUI(currentTrack);
+            }
+        };
+
+        // 1. ПОИСК МУЗЫКИ НАПРЯМУЮ ИЗ БРАУЗЕРА (Без своего сервера!)
+        async function searchMusic() {
+            const query = document.getElementById('searchInput').value.trim();
+            if (!query) return;
+
+            const container = document.getElementById('mainContent');
+            container.innerHTML = `<div class="text-center text-zinc-400 mt-16 animate-pulse">Ищем в ${currentSource.toUpperCase()}...</div>`;
+
+            try {
+                if (currentSource === 'spotify') {
+                    // Используем открытый музыкальный каталог iTunes/Spotify Metadata + Saavn CDN для полных студийных аудиодорожек
+                    const res = await fetch(`https://saavn.dev/api/search/songs?query=${encodeURIComponent(query)}&limit=15`);
+                    const json = await res.json();
+                    if (json.data && json.data.results && json.data.results.length > 0) {
+                        lastSearchResults = json.data.results.map(item => ({
+                            id: item.id,
+                            title: item.name.replace(/&quot;/g, '"').replace(/&amp;/g, '&'),
+                            artist: item.artists?.primary?.map(a => a.name).join(', ') || 'Artist',
+                            thumbnail: item.image?.[item.image.length - 1]?.url || 'https://via.placeholder.com/150',
+                            streamDirect: item.downloadUrl?.[item.downloadUrl.length - 1]?.url || null,
+                            source: 'spotify'
+                        }));
+                        renderTrackList(lastSearchResults);
+                        return;
+                    }
+                }
+
+                // Поиск через облачные YouTube-зеркала (Piped API)
+                for (const api of PIPED_APIS) {
+                    try {
+                        const filter = currentSource === 'spotify' ? 'music_songs' : 'videos';
+                        const res = await fetch(`${api}/search?q=${encodeURIComponent(query)}&filter=${filter}`);
+                        if (!res.ok) continue;
+                        const data = await res.json();
+                        lastSearchResults = (data.items || []).slice(0, 15).map(item => {
+                            const vidId = item.url ? item.url.split('v=')[1] : item.id;
+                            return {
+                                id: vidId,
+                                title: item.title,
+                                artist: item.uploaderName || 'YouTube',
+                                thumbnail: item.thumbnail,
+                                videoId: vidId,
+                                source: currentSource
+                            };
+                        });
+                        renderTrackList(lastSearchResults);
+                        return;
+                    } catch (e) {}
+                }
+
+                // Резервный поиск по каталогу iTunes (работает 100% везде без VPN)
+                const itunesRes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=15`);
+                const itunesData = await itunesRes.json();
+                lastSearchResults = itunesData.results.map(item => ({
+                    id: String(item.trackId),
+                    title: item.trackName,
+                    artist: item.artistName,
+                    thumbnail: item.artworkUrl100.replace('100x100', '400x400'),
+                    streamDirect: item.previewUrl,
+                    searchQuery: `${item.artistName} - ${item.trackName}`,
+                    source: 'spotify'
+                }));
+                renderTrackList(lastSearchResults);
+
+            } catch (e) {
+                container.innerHTML = `<div class="text-center text-red-400 mt-16">Ошибка сети</div>`;
+            }
+        }
+
+        // 2. ЗАПУСК ТРЕКА (Прямой поток M4A из облака)
+        async function playTrack(track) {
+            currentTrack = track;
+            showPlayerUI(track);
+            document.getElementById('playPauseBtn').innerText = '⏳';
+
+            try {
+                // А. Если у трека уже есть прямая ссылка на полный M4A-файл
+                if (track.streamDirect && !track.searchQuery) {
+                    audio.src = track.streamDirect;
+                    audio.play();
+                    setupLockScreen(track);
+                    return;
+                }
+
+                // Б. Если трек импортирован из Spotify или найден по названию — ищем его полный аудиопоток
+                const q = track.searchQuery || `${track.artist} - ${track.title}`;
+                const sRes = await fetch(`https://saavn.dev/api/search/songs?query=${encodeURIComponent(q)}&limit=1`);
+                const sData = await sRes.json();
+                if (sData.data?.results?.[0]?.downloadUrl) {
+                    const urls = sData.data.results[0].downloadUrl;
+                    audio.src = urls[urls.length - 1].url;
+                    audio.play();
+                    setupLockScreen(track);
+                    return;
+                }
+
+                // В. Если это видео из YouTube — забираем аудиодорожку через облачный шлюз Piped
+                if (track.videoId) {
+                    for (const api of PIPED_APIS) {
+                        try {
+                            const r = await fetch(`${api}/streams/${track.videoId}`);
+                            if (!r.ok) continue;
+                            const streamData = await r.json();
+                            const m4a = (streamData.audioStreams || []).find(s => s.mimeType?.includes('mp4')) || streamData.audioStreams?.[0];
+                            if (m4a && m4a.url) {
+                                audio.src = m4a.url;
+                                audio.play();
+                                setupLockScreen(track);
+                                return;
+                            }
+                        } catch (e) {}
+                    }
+                }
+
+                // Г. Запасной вариант (аудио из iTunes)
+                if (track.streamDirect) {
+                    audio.src = track.streamDirect;
+                    audio.play();
+                    setupLockScreen(track);
+                } else {
+                    alert("Не удалось получить аудиопоток для этого трека");
+                    document.getElementById('playPauseBtn').innerText = '▶';
+                }
+            } catch (e) {
+                document.getElementById('playPauseBtn').innerText = '▶';
+            }
+        }
+
+        // 3. ИМПОРТ ПЛЕЙЛИСТОВ SPOTIFY ПРЯМО В БРАУЗЕРЕ
+        async function importPlaylistPrompt() {
+            const url = prompt("Вставь ссылку на открытый плейлист из Spotify:");
+            if (!url) return;
+
+            const match = url.match(/playlist\/([a-zA-Z0-9]+)/);
+            if (!match) {
+                alert("Неверная ссылка на плейлист Spotify");
+                return;
+            }
+
+            const playlistId = match[1];
+            const embedUrl = `https://open.spotify.com/embed/playlist/${playlistId}`;
+            const container = document.getElementById('mainContent');
+            container.innerHTML = `<div class="text-center text-green-400 mt-16 animate-pulse">Скачиваем плейлист из Spotify...</div>`;
+
+            try {
+                // Загружаем страницу плейлиста через облачный CORS-прокси
+                const res = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(embedUrl)}`);
+                const data = await res.json();
+                const html = data.contents || "";
+
+                const nextMatch = html.match(/<script[^>]*id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+                if (nextMatch) {
+                    const json = JSON.parse(nextMatch[1]);
+                    const entity = json?.props?.pageProps?.state?.data?.entity;
+                    const plName = entity?.name || entity?.title || "Spotify Плейлист";
+                    const cover = entity?.coverArt?.sources?.[0]?.url || "https://via.placeholder.com/150";
+                    const trackList = entity?.trackList || [];
+
+                    const importedTracks = trackList.map((t, idx) => ({
+                        id: t.uri || `sp-${idx}-${Date.now()}`,
+                        title: t.title,
+                        artist: (t.subtitle || "").replace(/\u00a0/g, " "),
+                        thumbnail: cover,
+                        searchQuery: `${(t.subtitle || "").replace(/\u00a0/g, " ")} - ${t.title}`,
+                        source: 'spotify'
+                    }));
+
+                    if (importedTracks.length > 0) {
+                        playlists.unshift({ name: plName, tracks: importedTracks });
+                        localStorage.setItem('my_playlists', JSON.stringify(playlists));
+                        renderPlaylistsView();
+                        return;
+                    }
+                }
+                alert("Не удалось вытащить треки. Убедись, что плейлист открытый.");
+                renderPlaylistsView();
+            } catch (e) {
+                alert("Ошибка при обращении к Spotify");
+                renderPlaylistsView();
+            }
+        }
+
+        // Остальная логика приложения (Очередь, Shuffle, Лайки, Плейлисты)
+        function shuffleArray(arr) {
+            const copy = [...arr];
+            for (let i = copy.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [copy[i], copy[j]] = [copy[j], copy[i]];
+            }
+            return copy;
+        }
+
+        function toggleShuffle() {
+            isShuffle = !isShuffle;
+            localStorage.setItem('my_shuffle', JSON.stringify(isShuffle));
+            updateShuffleUI();
+            if (originalQueue.length > 1 && currentTrack) {
+                if (isShuffle) {
+                    const others = originalQueue.filter(t => t.id !== currentTrack.id);
+                    currentQueue = [currentTrack, ...shuffleArray(others)];
+                    currentIndex = 0;
+                } else {
+                    currentQueue = [...originalQueue];
+                    currentIndex = currentQueue.findIndex(t => t.id === currentTrack.id);
+                }
+            }
+        }
+
+        function updateShuffleUI() {
+            const btn = document.getElementById('shuffleBtn');
+            btn.className = isShuffle 
+                ? "text-sm px-1.5 py-1 rounded-lg bg-green-500/20 text-green-400 border border-green-500/40 active:scale-90 transition"
+                : "text-sm px-1.5 py-1 rounded-lg text-zinc-500 active:scale-90 transition";
+        }
+
+        function toggleRepeat() {
+            repeatMode = repeatMode === 'none' ? 'all' : repeatMode === 'all' ? 'one' : 'none';
+            localStorage.setItem('my_repeat', repeatMode);
+            updateRepeatUI();
+        }
+
+        function updateRepeatUI() {
+            const btn = document.getElementById('repeatBtn');
+            btn.innerText = repeatMode === 'one' ? '🔂' : '🔁';
+            btn.className = repeatMode === 'none'
+                ? "text-sm px-1.5 py-1 rounded-lg text-zinc-500 active:scale-90 transition"
+                : "text-sm px-1.5 py-1 rounded-lg bg-green-500/20 text-green-400 border border-green-500/40 active:scale-90 transition";
+        }
+
+        function switchTab(tab) {
+            currentTab = tab;
+            ['spotify', 'youtube', 'favorites', 'playlists'].forEach(t => {
+                document.getElementById(`tab-${t}`).className = t === tab 
+                    ? "flex flex-col items-center text-white font-bold text-xs py-1 px-3 scale-105 transition" 
+                    : "flex flex-col items-center text-zinc-500 text-xs py-1 px-3";
+            });
+
+            const searchHeader = document.getElementById('searchHeader');
+            const libraryHeader = document.getElementById('libraryHeader');
+            const playlistActions = document.getElementById('playlistActions');
+
+            if (tab === 'spotify' || tab === 'youtube') {
+                currentSource = tab;
+                searchHeader.classList.remove('hidden');
+                libraryHeader.classList.add('hidden');
+                document.getElementById('sourceLabel').innerHTML = tab === 'spotify'
+                    ? `Ищем в: <span class="text-green-400 font-semibold">Spotify (Официальный каталог)</span>`
+                    : `Ищем в: <span class="text-red-400 font-semibold">YouTube (Ремиксы и видео)</span>`;
+                renderTrackList(lastSearchResults);
+            } else if (tab === 'favorites') {
+                searchHeader.classList.add('hidden');
+                libraryHeader.classList.remove('hidden');
+                playlistActions.classList.add('hidden');
+                document.getElementById('libraryTitle').innerText = `❤️ Любимые (${favorites.length})`;
+                renderTrackList(favorites, { isFavorites: true });
+            } else if (tab === 'playlists') {
+                searchHeader.classList.add('hidden');
+                libraryHeader.classList.remove('hidden');
+                playlistActions.classList.remove('hidden');
+                document.getElementById('libraryTitle').innerText = `📁 Мои плейлисты`;
+                renderPlaylistsView();
+            }
+        }
+
+        function renderTrackList(tracks, options = {}) {
+            const container = document.getElementById('mainContent');
+            if (!tracks || tracks.length === 0) {
+                container.innerHTML = `<div class="text-center text-zinc-500 mt-16 text-sm">Список пуст</div>`;
+                return;
+            }
+
+            let headerHtml = '';
+            if (options.playlistIndex !== undefined) {
+                const pl = playlists[options.playlistIndex];
+                headerHtml += `
+                    <div class="flex items-center justify-between mb-3 pb-2 border-b border-zinc-800">
+                        <button onclick="renderPlaylistsView()" class="text-xs text-zinc-400">← Назад</button>
+                        <span class="text-sm font-bold text-green-400 truncate max-w-[180px]">${pl.name}</span>
+                        <button onclick="deletePlaylist(${options.playlistIndex})" class="text-xs text-red-400">Удалить</button>
+                    </div>`;
+            }
+
+            if (tracks.length > 1 && (options.isFavorites || options.playlistIndex !== undefined)) {
+                headerHtml += `
+                    <div class="flex gap-2 mb-3">
+                        <button onclick="playAllInOrder()" class="flex-1 bg-zinc-800 text-white font-semibold py-2.5 rounded-xl text-xs">▶ Слушать</button>
+                        <button onclick="shuffleAndPlayAll()" class="flex-1 bg-green-500 text-black font-semibold py-2.5 rounded-xl text-xs">🔀 Перемешать</button>
+                    </div>`;
+            }
+
+            window.displayedTracks = tracks;
+            container.innerHTML = headerHtml + tracks.map((t, idx) => {
+                const isLiked = favorites.some(f => f.id === t.id);
+                const isCurrent = currentTrack && currentTrack.id === t.id;
+                return `
+                    <div onclick="playFromList(${idx})" class="flex items-center gap-3 bg-zinc-900/70 p-2.5 rounded-xl active:bg-zinc-800 transition cursor-pointer">
+                        <img src="${t.thumbnail}" class="w-12 h-12 rounded-lg object-cover bg-zinc-800">
+                        <div class="flex-1 min-w-0">
+                            <div class="text-sm ${isCurrent ? 'text-green-400 font-bold' : 'text-white font-medium'} truncate">${t.title}</div>
+                            <div class="text-xs text-zinc-400 truncate mt-0.5">${t.artist}</div>
+                        </div>
+                        <button onclick="event.stopPropagation(); toggleLikeTrack(${idx})" class="text-lg px-1.5">${isLiked ? '❤️' : '🤍'}</button>
+                        <button onclick="event.stopPropagation(); openAddToPlaylistModal(${idx})" class="text-zinc-400 text-lg px-1.5">➕</button>
+                    </div>`;
+            }).join('');
+        }
+
+        function playFromList(index) {
+            originalQueue = [...window.displayedTracks];
+            const selected = originalQueue[index];
+            if (isShuffle && originalQueue.length > 1) {
+                const others = originalQueue.filter((_, i) => i !== index);
+                currentQueue = [selected, ...shuffleArray(others)];
+                currentIndex = 0;
+            } else {
+                currentQueue = [...originalQueue];
+                currentIndex = index;
+            }
+            playTrack(currentQueue[currentIndex]);
+        }
+
+        function playAllInOrder() {
+            isShuffle = false; updateShuffleUI();
+            originalQueue = [...window.displayedTracks];
+            currentQueue = [...originalQueue];
+            currentIndex = 0;
+            playTrack(currentQueue[0]);
+        }
+
+        function shuffleAndPlayAll() {
+            isShuffle = true; updateShuffleUI();
+            originalQueue = [...window.displayedTracks];
+            currentQueue = shuffleArray(originalQueue);
+            currentIndex = 0;
+            playTrack(currentQueue[0]);
+        }
+
+        function playNext() {
+            if (currentIndex + 1 < currentQueue.length) {
+                currentIndex++;
+                playTrack(currentQueue[currentIndex]);
+            } else if (repeatMode === 'all' && currentQueue.length > 0) {
+                currentIndex = 0;
+                playTrack(currentQueue[0]);
+            }
+        }
+
+        function playPrev() {
+            if (audio.currentTime > 5) audio.currentTime = 0;
+            else if (currentIndex > 0) {
+                currentIndex--;
+                playTrack(currentQueue[currentIndex]);
+            }
+        }
+
+        audio.onended = () => {
+            if (repeatMode === 'one') { audio.currentTime = 0; audio.play(); }
+            else playNext();
+        };
+
+        function toggleLikeTrack(idx) {
+            toggleLikeObject(window.displayedTracks[idx]);
+            if (currentTab === 'favorites') renderTrackList(favorites, { isFavorites: true });
+            else renderTrackList(window.displayedTracks);
+        }
+
+        function toggleLikeCurrent() {
+            if (!currentTrack) return;
+            toggleLikeObject(currentTrack);
+            if (currentTab === 'favorites') renderTrackList(favorites, { isFavorites: true });
+        }
+
+        function toggleLikeObject(track) {
+            const idx = favorites.findIndex(f => f.id === track.id);
+            if (idx >= 0) favorites.splice(idx, 1);
+            else favorites.unshift(track);
+            localStorage.setItem('my_favorites', JSON.stringify(favorites));
+            if (currentTrack) {
+                document.getElementById('playerLikeBtn').innerText = favorites.some(f => f.id === currentTrack.id) ? '❤️' : '🤍';
+            }
+        }
+
+        function renderPlaylistsView() {
+            const container = document.getElementById('mainContent');
+            if (playlists.length === 0) {
+                container.innerHTML = `<div class="text-center text-zinc-500 mt-16 text-xs">Нажми «+ Создать» или «📥 Импорт Spotify» сверху</div>`;
+                return;
+            }
+            container.innerHTML = playlists.map((pl, i) => `
+                <div onclick="renderTrackList(playlists[${i}].tracks, { playlistIndex: ${i} })" class="flex items-center gap-3 bg-zinc-900 p-3 rounded-xl cursor-pointer">
+                    <img src="${pl.tracks[0]?.thumbnail || 'https://via.placeholder.com/150'}" class="w-14 h-14 rounded-lg object-cover">
+                    <div class="flex-1">
+                        <div class="text-sm font-bold">${pl.name}</div>
+                        <div class="text-xs text-zinc-400">${pl.tracks.length} треков</div>
+                    </div>
+                    <span class="text-zinc-500">→</span>
+                </div>`).join('');
+        }
+
+        function createNewPlaylist() {
+            const name = prompt("Название плейлиста:");
+            if (!name) return;
+            playlists.push({ name: name.trim(), tracks: [] });
+            localStorage.setItem('my_playlists', JSON.stringify(playlists));
+            renderPlaylistsView();
+        }
+
+        function deletePlaylist(index) {
+            playlists.splice(index, 1);
+            localStorage.setItem('my_playlists', JSON.stringify(playlists));
+            renderPlaylistsView();
+        }
+
+        function openAddToPlaylistModal(idx) {
+            trackToAdd = window.displayedTracks[idx];
+            if (playlists.length === 0) { createNewPlaylist(); return; }
+            document.getElementById('modalPlaylistList').innerHTML = playlists.map((pl, i) => `
+                <button onclick="playlists[${i}].tracks.push(trackToAdd); localStorage.setItem('my_playlists', JSON.stringify(playlists)); closeModal();" class="w-full text-left p-2.5 bg-zinc-800 rounded-xl text-sm flex justify-between">
+                    <span>📁 ${pl.name}</span><span class="text-xs text-zinc-400">${pl.tracks.length} тр.</span>
+                </button>`).join('');
+            document.getElementById('playlistModal').classList.remove('hidden');
+        }
+
+        function closeModal() { document.getElementById('playlistModal').classList.add('hidden'); }
+
+        function showPlayerUI(track) {
+            document.getElementById('playerBar').classList.remove('hidden');
+            document.getElementById('playerTitle').innerText = track.title;
+            document.getElementById('playerArtist').innerText = track.artist;
+            document.getElementById('playerThumb').src = track.thumbnail;
+            document.getElementById('playerLikeBtn').innerText = favorites.some(f => f.id === track.id) ? '❤️' : '🤍';
+        }
+
+        function togglePlay() {
+            if (!audio.src) { if (currentTrack) playTrack(currentTrack); return; }
+            if (audio.paused) audio.play(); else audio.pause();
+        }
+
+        audio.onplay = () => document.getElementById('playPauseBtn').innerText = '⏸';
+        audio.onpause = () => document.getElementById('playPauseBtn').innerText = '▶';
+        audio.ontimeupdate = () => {
+            if (!audio.duration) return;
+            document.getElementById('progressBar').value = (audio.currentTime / audio.duration) * 100;
+            document.getElementById('currentTime').innerText = formatTime(audio.currentTime);
+            document.getElementById('durationTime').innerText = formatTime(audio.duration);
+            if (currentTrack) localStorage.setItem('lastTrackState', JSON.stringify({ track: currentTrack, currentTime: audio.currentTime }));
+        };
+
+        function seekAudio(val) { if (audio.duration) audio.currentTime = (val / 100) * audio.duration; }
+        function formatTime(sec) { const m = Math.floor(sec / 60), s = Math.floor(sec % 60); return `${m}:${s < 10 ? '0' : ''}${s}`; }
+
+        function setupLockScreen(track) {
+            if ('mediaSession' in navigator) {
+                navigator.mediaSession.metadata = new MediaMetadata({
+                    title: track.title, artist: track.artist,
+                    artwork: [{ src: track.thumbnail, sizes: '512x512', type: 'image/jpeg' }]
+                });
+                navigator.mediaSession.setActionHandler('play', () => audio.play());
+                navigator.mediaSession.setActionHandler('pause', () => audio.pause());
+                navigator.mediaSession.setActionHandler('nexttrack', () => playNext());
+                navigator.mediaSession.setActionHandler('previoustrack', () => playPrev());
+            }
+        }
+    </script>
+</body>
+</html>
