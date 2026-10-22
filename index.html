@@ -268,59 +268,105 @@
         }
 
         // 3. ИМПОРТ ПЛЕЙЛИСТОВ SPOTIFY ПРЯМО В БРАУЗЕРЕ
+// Универсальный поиск ключа внутри JSON Spotify (на любой глубине)
+        function findKeyDeep(obj, key) {
+            if (!obj || typeof obj !== 'object') return null;
+            if (key in obj && obj[key]) return obj[key];
+            for (const k of Object.keys(obj)) {
+                const res = findKeyDeep(obj[k], key);
+                if (res) return res;
+            }
+            return null;
+        }
+
+        // 3. ИМПОРТ ПЛЕЙЛИСТОВ SPOTIFY ПРЯМО В БРАУЗЕРЕ (Через каскад из 4 прокси)
         async function importPlaylistPrompt() {
             const url = prompt("Вставь ссылку на открытый плейлист из Spotify:");
             if (!url) return;
 
             const match = url.match(/playlist\/([a-zA-Z0-9]+)/);
             if (!match) {
-                alert("Неверная ссылка на плейлист Spotify");
+                alert("Неверная ссылка! Нужна ссылка вида open.spotify.com/playlist/...");
                 return;
             }
 
             const playlistId = match[1];
             const embedUrl = `https://open.spotify.com/embed/playlist/${playlistId}`;
             const container = document.getElementById('mainContent');
-            container.innerHTML = `<div class="text-center text-green-400 mt-16 animate-pulse">Скачиваем плейлист из Spotify...</div>`;
+            container.innerHTML = `<div class="text-center text-green-400 mt-16 animate-pulse">Скачиваем плейлист из Spotify...<br><span class="text-xs text-zinc-500">Пробуем облачные шлюзы (5-10 сек)</span></div>`;
+
+            // Список облачных шлюзов (если один не сработает, берется следующий)
+            const proxyUrls = [
+                `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(embedUrl)}`,
+                `https://corsproxy.io/?${encodeURIComponent(embedUrl)}`,
+                `https://api.allorigins.win/raw?url=${encodeURIComponent(embedUrl)}`,
+                `https://thingproxy.freeboard.io/fetch/${embedUrl}`
+            ];
+
+            let html = "";
+            for (const proxy of proxyUrls) {
+                try {
+                    const res = await fetch(proxy);
+                    if (!res.ok) continue;
+                    const text = await res.text();
+                    // Проверяем, что вернулась именно страница плеера с треками, а не заглушка
+                    if (text && (text.includes("trackList") || text.includes("__NEXT_DATA__"))) {
+                        html = text;
+                        break;
+                    }
+                } catch (e) {
+                    console.log("Прокси не ответил, пробуем следующий...", proxy);
+                }
+            }
+
+            if (!html) {
+                alert("Ни один облачный шлюз не смог достучаться до Spotify. Попробуй еще раз через минуту или включи VPN.");
+                renderPlaylistsView();
+                return;
+            }
 
             try {
-                // Загружаем страницу плейлиста через облачный CORS-прокси
-                const res = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(embedUrl)}`);
-                const data = await res.json();
-                const html = data.contents || "";
+                // Ищем JSON с данными внутри страницы
+                const nextMatch = html.match(/<script[^>]*id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/) || 
+                                  html.match(/<script[^>]*type="application\/json"[^>]*>([\s\S]*?trackList[\s\S]*?)<\/script>/);
 
-                const nextMatch = html.match(/<script[^>]*id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
                 if (nextMatch) {
                     const json = JSON.parse(nextMatch[1]);
-                    const entity = json?.props?.pageProps?.state?.data?.entity;
+                    const trackList = findKeyDeep(json, 'trackList');
+                    const entity = findKeyDeep(json, 'entity') || json;
+                    
                     const plName = entity?.name || entity?.title || "Spotify Плейлист";
-                    const cover = entity?.coverArt?.sources?.[0]?.url || "https://via.placeholder.com/150";
-                    const trackList = entity?.trackList || [];
+                    const coverObj = findKeyDeep(json, 'coverArt') || findKeyDeep(json, 'visualIdentity');
+                    const sources = findKeyDeep(coverObj, 'sources') || findKeyDeep(coverObj, 'image');
+                    const cover = (Array.isArray(sources) && sources[0]?.url) ? sources[0].url : "https://via.placeholder.com/150";
 
-                    const importedTracks = trackList.map((t, idx) => ({
-                        id: t.uri || `sp-${idx}-${Date.now()}`,
-                        title: t.title,
-                        artist: (t.subtitle || "").replace(/\u00a0/g, " "),
-                        thumbnail: cover,
-                        searchQuery: `${(t.subtitle || "").replace(/\u00a0/g, " ")} - ${t.title}`,
-                        source: 'spotify'
-                    }));
+                    if (Array.isArray(trackList) && trackList.length > 0) {
+                        const importedTracks = trackList.map((t, idx) => {
+                            const artist = (t.subtitle || "Исполнитель").replace(/\u00a0/g, " ");
+                            const title = t.title || "Трек";
+                            return {
+                                id: t.uri || `sp-${idx}-${Date.now()}`,
+                                title: title,
+                                artist: artist,
+                                thumbnail: cover,
+                                searchQuery: `${artist} - ${title}`,
+                                source: 'spotify'
+                            };
+                        });
 
-                    if (importedTracks.length > 0) {
                         playlists.unshift({ name: plName, tracks: importedTracks });
                         localStorage.setItem('my_playlists', JSON.stringify(playlists));
                         renderPlaylistsView();
                         return;
                     }
                 }
-                alert("Не удалось вытащить треки. Убедись, что плейлист открытый.");
+                alert("Страница загружена, но список треков внутри не найден. Убедись, что плейлист открытый (Public).");
                 renderPlaylistsView();
             } catch (e) {
-                alert("Ошибка при обращении к Spotify");
+                alert("Ошибка разбора данных плейлиста: " + e.message);
                 renderPlaylistsView();
             }
         }
-
         // Остальная логика приложения (Очередь, Shuffle, Лайки, Плейлисты)
         function shuffleArray(arr) {
             const copy = [...arr];
